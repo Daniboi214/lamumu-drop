@@ -1,180 +1,331 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<title>Cow Catch Game</title>
-<style>
-    body {
-        background-color: black;
-        color: white;
-        font-family: Arial, sans-serif;
-        text-align: center;
-        margin: 0;
-        padding: 0;
-    }
-    canvas {
-        background: #222;
-        display: block;
-        margin: 20px auto;
-        border: 2px solid white;
-    }
-    #startScreen, #gameOverScreen {
-        position: fixed;
-        top: 0; left: 0;
-        width: 100%; height: 100%;
-        background: rgba(0,0,0,0.9);
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        z-index: 10;
-    }
-    button {
-        background: orange;
-        border: none;
-        padding: 12px 24px;
-        font-size: 20px;
-        cursor: pointer;
-        margin-top: 20px;
-        border-radius: 8px;
-    }
-    button:hover {
-        background: gold;
-    }
-</style>
-<link rel="stylesheet" href="style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Catch the Cows 🐮</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<div id="startScreen">
-    <h1>🐄 Cow Catch Game 🐄</h1>
-    <button onclick="startGame()">Start Game</button>
-</div>
+  <!-- START SCREEN -->
+  <div id="startScreen" class="overlay">
+    <div class="panel">
+      <h1>🐮 Catch the Cows</h1>
+      <p>Use ← / → on keyboard or the buttons on mobile. Catch the cows — don't miss!</p>
+      <button id="startBtn" class="primary">Start Game</button>
+    </div>
+  </div>
 
-<div id="gameOverScreen" style="display:none;">
-    <h1>Game Over</h1>
-    <p id="scoreDisplay"></p>
-    <p id="highScoreDisplay"></p>
-    <button onclick="restartGame()">Play Again</button>
-</div>
+  <!-- GAME OVER SCREEN -->
+  <div id="gameOverScreen" class="overlay" style="display:none;">
+    <div class="panel">
+      <h1>Game Over</h1>
+      <p id="finalScore">Score: 0</p>
+      <p id="bestScore">Best: 0</p>
+      <button id="playAgainBtn" class="primary">Play Again</button>
+    </div>
+  </div>
 
-<canvas id="gameCanvas" width="480" height="320"></canvas>
+  <!-- Canvas -->
+  <div id="gameWrap">
+    <canvas id="gameCanvas" width="500" height="500"></canvas>
 
-<audio id="catchSound" src="catch.wav"></audio>
-<audio id="missSound" src="miss.wav"></audio>
-<audio id="themeMusic" src="theme.mp3" loop></audio>
+    <!-- Touch Controls (visible on small screens) -->
+    <div id="mobileControls" class="controls">
+      <button id="leftBtn" class="controlBtn">◀</button>
+      <button id="rightBtn" class="controlBtn">▶</button>
+    </div>
+  </div>
+
+  <!-- Audio -->
+  <audio id="catchSound" src="catch.wav" preload="auto"></audio>
+  <audio id="missSound" src="miss.wav" preload="auto"></audio>
+  <audio id="themeMusic" src="theme.mp3" preload="auto" loop></audio>
 
 <script>
-let canvas = document.getElementById("gameCanvas");
-let ctx = canvas.getContext("2d");
+/* ---------------------------
+   Cow Catch Game (single file JS)
+   - Works with keyboard (PC)
+   - Works with touch buttons + swipe (mobile)
+   - theme.mp3 plays after Start button click (avoids autoplay block)
+   - On Game Over: theme stops, miss.wav plays, overlay shows score & best
+   ----------------------------*/
 
-let paddleHeight = 10;
-let paddleWidth = 90;
-let paddleX = (canvas.width - paddleWidth) / 2;
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
 
-let rightPressed = false;
-let leftPressed = false;
+const startScreen = document.getElementById('startScreen');
+const startBtn = document.getElementById('startBtn');
+const gameOverScreen = document.getElementById('gameOverScreen');
+const finalScoreEl = document.getElementById('finalScore');
+const bestScoreEl = document.getElementById('bestScore');
+const playAgainBtn = document.getElementById('playAgainBtn');
 
-let cow = { x: Math.random() * (canvas.width - 50), y: 0, size: 50, speed: 1.7 }; // slowed by ~15%
+const leftBtn = document.getElementById('leftBtn');
+const rightBtn = document.getElementById('rightBtn');
+
+const catchSound = document.getElementById('catchSound');
+const missSound = document.getElementById('missSound');
+const themeMusic = document.getElementById('themeMusic');
+
+const cowImg = new Image();
+cowImg.src = 'cow.jpeg';
+
+let gameRunning = false;
 let score = 0;
-let highScore = localStorage.getItem("highScore") || 0;
-let gameInterval;
-let themeMusic = document.getElementById("themeMusic");
+let best = parseInt(localStorage.getItem('cowBest') || '0', 10);
 
-document.addEventListener("keydown", keyDownHandler);
-document.addEventListener("keyup", keyUpHandler);
+// Paddle
+const paddle = {
+  width: 120,
+  height: 16,
+  x: (canvas.width - 120) / 2,
+  y: canvas.height - 40,
+  speed: 12,    // faster paddle
+  dx: 0
+};
 
-function keyDownHandler(e) {
-    if(e.key === "Right" || e.key === "ArrowRight") rightPressed = true;
-    else if(e.key === "Left" || e.key === "ArrowLeft") leftPressed = true;
+// Cow (falling object)
+const cow = {
+  size: 70,     // bigger icon
+  x: Math.random() * (canvas.width - 70),
+  y: -70,
+  baseSpeed: 2.5, // base speed BEFORE the 15% reduction
+  speed: 0,
+};
+
+// initial cow speed reduced by ~15%
+cow.speed = cow.baseSpeed * 0.85;
+
+// Controls state
+let keys = { left: false, right: false };
+let pointerMoveDx = 0; // for button/touch movement
+let touchStartX = null;
+
+/* ---------- Utility ---------- */
+function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+/* ---------- Drawing ---------- */
+function clear() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
 }
 
-function keyUpHandler(e) {
-    if(e.key === "Right" || e.key === "ArrowRight") rightPressed = false;
-    else if(e.key === "Left" || e.key === "ArrowLeft") leftPressed = false;
+function drawBackground() {
+  // simple gradient background
+  const g = ctx.createLinearGradient(0,0,0,canvas.height);
+  g.addColorStop(0, '#061130');
+  g.addColorStop(1, '#042a40');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
 }
 
 function drawPaddle() {
-    ctx.beginPath();
-    ctx.rect(paddleX, canvas.height - paddleHeight - 5, paddleWidth, paddleHeight);
-    ctx.fillStyle = "orange";
-    ctx.fill();
-    ctx.closePath();
+  // glow + paddle
+  ctx.fillStyle = '#ff9f1c';
+  ctx.shadowColor = 'rgba(255,159,28,0.6)';
+  ctx.shadowBlur = 12;
+  ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+  ctx.shadowBlur = 0;
 }
 
 function drawCow() {
-    let img = new Image();
-    img.src = "cow.jpeg";
-    ctx.drawImage(img, cow.x, cow.y, cow.size, cow.size);
+  // white background rectangle behind the cow
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(cow.x, cow.y, cow.size, cow.size);
+  // draw image (if not loaded yet, draw a placeholder)
+  if (cowImg.complete && cowImg.naturalWidth !== 0) {
+    ctx.drawImage(cowImg, cow.x, cow.y, cow.size, cow.size);
+  } else {
+    // placeholder
+    ctx.fillStyle = '#000';
+    ctx.fillRect(cow.x + 10, cow.y + 10, cow.size - 20, cow.size - 20);
+  }
 }
 
 function drawScore() {
-    ctx.font = "16px Arial";
-    ctx.fillStyle = "white";
-    ctx.fillText("Score: " + score, 8, 20);
+  ctx.font = '18px Arial';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('Score: ' + score, 14, 26);
 }
 
-function updateGame() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawPaddle();
-    drawCow();
-    drawScore();
+/* ---------- Game logic ---------- */
 
-    // Cow falling
-    cow.y += cow.speed;
-    if(cow.y > canvas.height) {
-        endGame();
-        return;
-    }
-
-    // Paddle wrap-around
-    if(rightPressed) paddleX += 7; // faster paddle
-    if(leftPressed) paddleX -= 7;
-    if(paddleX + paddleWidth < 0) paddleX = canvas.width;
-    if(paddleX > canvas.width) paddleX = -paddleWidth;
-
-    // Collision
-    if(
-        cow.y + cow.size >= canvas.height - paddleHeight - 5 &&
-        cow.x + cow.size > paddleX &&
-        cow.x < paddleX + paddleWidth
-    ) {
-        document.getElementById("catchSound").play();
-        score++;
-        cow.x = Math.random() * (canvas.width - cow.size);
-        cow.y = 0;
-        cow.speed += 0.1; // speed up gradually
-    }
+function resetCow() {
+  cow.x = Math.random() * (canvas.width - cow.size);
+  cow.y = - (Math.random() * 40 + cow.size);
+  // small randomness on speed; always keep ramp factor
+  cow.speed = (cow.baseSpeed * 0.85) + Math.random() * 0.5;
 }
 
 function startGame() {
-    document.getElementById("startScreen").style.display = "none";
-    score = 0;
-    cow.speed = 1.7;
-    cow.y = 0;
-    cow.x = Math.random() * (canvas.width - cow.size);
-    themeMusic.currentTime = 0;
-    themeMusic.play();
-    gameInterval = setInterval(updateGame, 16);
+  // reset values
+  score = 0;
+  paddle.x = (canvas.width - paddle.width) / 2;
+  resetCow();
+  gameRunning = true;
+  startScreen.style.display = 'none';
+  gameOverScreen.style.display = 'none';
+  // start theme (user initiated by clicking start)
+  themeMusic.currentTime = 0;
+  themeMusic.volume = 0.45;
+  themeMusic.play().catch(()=>{/*ignore*/});
+  requestAnimationFrame(loop);
 }
 
 function endGame() {
-    clearInterval(gameInterval);
-    themeMusic.pause();
-    document.getElementById("missSound").play();
-    if(score > highScore) {
-        highScore = score;
-        localStorage.setItem("highScore", highScore);
+  gameRunning = false;
+  // stop theme, play miss
+  try { themeMusic.pause(); } catch(e){}
+  try { missSound.currentTime = 0; missSound.play(); } catch(e){}
+  // update best
+  if (score > best) {
+    best = score;
+    localStorage.setItem('cowBest', String(best));
+  }
+  // show overlay with scores
+  finalScoreEl.textContent = 'Score: ' + score;
+  bestScoreEl.textContent = 'Best: ' + best;
+  gameOverScreen.style.display = 'flex';
+}
+
+/* ---------- Input handling ---------- */
+
+// Keyboard
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft' || e.key === 'Left') keys.left = true;
+  if (e.key === 'ArrowRight' || e.key === 'Right') keys.right = true;
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'ArrowLeft' || e.key === 'Left') keys.left = false;
+  if (e.key === 'ArrowRight' || e.key === 'Right') keys.right = false;
+});
+
+// Mobile on-screen buttons: use pointer events to cover touch + mouse
+leftBtn.addEventListener('pointerdown', () => { pointerMoveDx = -paddle.speed; });
+leftBtn.addEventListener('pointerup', () => { pointerMoveDx = 0; });
+leftBtn.addEventListener('pointerleave', () => { pointerMoveDx = 0; });
+
+rightBtn.addEventListener('pointerdown', () => { pointerMoveDx = paddle.speed; });
+rightBtn.addEventListener('pointerup', () => { pointerMoveDx = 0; });
+rightBtn.addEventListener('pointerleave', () => { pointerMoveDx = 0; });
+
+// Swipe: detect horizontal swipe to move a short amount
+canvas.addEventListener('touchstart', (e) => {
+  if (!e.changedTouches || !e.changedTouches[0]) return;
+  touchStartX = e.changedTouches[0].clientX;
+}, {passive:true});
+
+canvas.addEventListener('touchend', (e) => {
+  if (touchStartX === null) return;
+  const touchEndX = e.changedTouches[0].clientX;
+  const diff = touchEndX - touchStartX;
+  const threshold = 30;
+  if (Math.abs(diff) > threshold) {
+    // short burst movement
+    paddle.x += diff > 0 ? paddle.speed * 1.2 : -paddle.speed * 1.2;
+  }
+  touchStartX = null;
+}, {passive:true});
+
+// Optional: let player drag paddle with finger directly (nice mobile UX)
+let isDragging = false;
+canvas.addEventListener('pointerdown', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  // if pointer is near paddle vertically, allow dragging
+  if (x >= 0) {
+    isDragging = true;
+  }
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!isDragging) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  // center paddle to touch
+  paddle.x = x - paddle.width / 2;
+});
+canvas.addEventListener('pointerup', () => { isDragging = false; });
+canvas.addEventListener('pointercancel', () => { isDragging = false; });
+
+/* ---------- Main loop ---------- */
+function loop() {
+  if (!gameRunning) return;
+  // update
+  // handle controls (keyboard)
+  if (keys.left) paddle.x -= paddle.speed;
+  if (keys.right) paddle.x += paddle.speed;
+  // pointer button
+  if (pointerMoveDx) paddle.x += pointerMoveDx;
+
+  // wrap-around logic
+  if (paddle.x + paddle.width < 0) paddle.x = canvas.width;
+  if (paddle.x > canvas.width) paddle.x = -paddle.width;
+
+  // cow falls (speed ramps slowly with score)
+  cow.y += cow.speed + score * 0.02;
+
+  // collision check: if cow intersects paddle's top area
+  if (cow.y + cow.size >= paddle.y) {
+    const cowLeft = cow.x;
+    const cowRight = cow.x + cow.size;
+    const paddleLeft = paddle.x;
+    const paddleRight = paddle.x + paddle.width;
+    if (cowRight > paddleLeft && cowLeft < paddleRight) {
+      // caught
+      score++;
+      // play catch sound (allow quick repeats)
+      try { catchSound.currentTime = 0; catchSound.play(); } catch(e){}
+      // slightly speed up cow for next drop
+      cow.baseSpeed += 0.05;
+      resetCow();
+    } else if (cow.y > canvas.height) {
+      // missed entirely (below screen)
+      endGame();
+      return;
     }
-    document.getElementById("scoreDisplay").innerText = "Score: " + score;
-    document.getElementById("highScoreDisplay").innerText = "High Score: " + highScore;
-    document.getElementById("gameOverScreen").style.display = "flex";
+  }
+
+  // if cow drops beyond canvas (safety)
+  if (cow.y > canvas.height + 200) {
+    endGame();
+    return;
+  }
+
+  // draw
+  clear();
+  drawBackground();
+  drawPaddle();
+  drawCow();
+  drawScore();
+
+  requestAnimationFrame(loop);
 }
 
-function restartGame() {
-    document.getElementById("gameOverScreen").style.display = "none";
-    startGame();
+/* ---------- UI events ---------- */
+startBtn.addEventListener('click', () => {
+  startGame();
+});
+
+playAgainBtn.addEventListener('click', () => {
+  gameOverScreen.style.display = 'none';
+  startGame();
+});
+
+/* ---------- initial setup ---------- */
+function resizeCanvasForDevice() {
+  // keep fixed canvas size for gameplay consistency
+  // (you can change to responsive if you want)
+  // canvas width/height already in markup: 500x500
 }
+resizeCanvasForDevice();
+
+// show best score on page load (optional)
+(function showInitialBest(){
+  // nothing else for now
+})();
+
 </script>
-
 </body>
 </html>
+
